@@ -3,6 +3,7 @@ import os
 import requests
 import unidecode
 
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 
 def process_raw_data(yr_list:list, verbose:bool = False):
 
@@ -52,7 +53,8 @@ def process_curated_data(df_raw:pd.DataFrame):
 
     df_cur = df_raw.copy()
 
-    df_cur = df_raw[["apelido","atleta_id","rodada_id","clube_id","posicao_id","preco_num","variacao_num","media_num","jogos_num","pontos_num","entrou_em_campo"]] 
+    df_cur = df_raw[["apelido","atleta_id","rodada_id","clube_id","posicao_id","preco_num","variacao_num","media_num","jogos_num","pontos_num","entrou_em_campo","year"]] 
+    df_cur['year_season'] = df_cur['year'].astype("str") + "-" + df_cur['rodada_id'].astype("str")
     df_cur = df_cur[df_cur["clube_id"].isin(current_teams)]
     df_cur = df_cur[df_cur["apelido"].isin(current_players)]
     df_cur = df_cur[df_cur["entrou_em_campo"] == True]
@@ -75,7 +77,7 @@ def process_curated_data(df_raw:pd.DataFrame):
     df_cur["preco_inicial"] = df_cur["preco_num"] - df_cur["variacao_num"]
     df_cur["benefit_ratio"] = df_cur["pontos_num"]/df_cur["preco_inicial"]
 
-    df_cur.drop(columns = ["preco_num","jogos_num","entrou_em_campo"], inplace = True)
+    # df_cur.drop(columns = ["preco_num","jogos_num","entrou_em_campo"], inplace = True)
 
     df_grouped = df_cur.groupby(["apelido","atleta_id"]).mean("media_num").reset_index()
     df_grouped[df_grouped['media_num'] == 0]
@@ -86,39 +88,85 @@ def process_curated_data(df_raw:pd.DataFrame):
     # Passo 3: Filtrar esses jogadores do DataFrame original
     filtered_df_cur = df_cur[~df_cur.set_index(['apelido', 'atleta_id']).index.isin(players_with_zero_mean.set_index(['apelido', 'atleta_id']).index)]
 
+    filtered_df_cur = filtered_df_cur.sort_values(by=['apelido', 'year_season'])
+    filtered_df_cur['pontos_rodada_futura'] = filtered_df_cur.groupby('apelido')['pontos_num'].shift(-1)
+
+
+
     return filtered_df_cur
 
-def data_encoding(df_cur:pd.DataFrame)->pd.DataFrame:
+def data_encoding(df_cur: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aplica Label Encoding nas colunas 'apelido' e 'clube_id' e One-Hot Encoding na coluna 'posicao_id'.
 
-    from sklearn.preprocessing import OneHotEncoder
-        
-    cols_to_encode = ['apelido', 'clube_id', 'posicao_id']
-    df_encoded = df_cur[cols_to_encode].copy()
+    Args:
+        df_cur (pd.DataFrame): DataFrame de entrada.
 
-    encoder = OneHotEncoder(categories='auto', handle_unknown='ignore')
+    Returns:
+        pd.DataFrame: DataFrame transformado.
+    """
 
-    # Ajustar e transformar os dados
-    df_encoded_onehot = encoder.fit_transform(df_encoded)
+    # Colunas para encoding
+    label_encode_cols = ['apelido', 'clube_id']
+    onehot_encode_cols = ['posicao_id']
 
-    # Obtendo as colunas one-hot encoded
-    encoded_columns = encoder.get_feature_names_out(cols_to_encode)
+    # Aplicando Label Encoding
+    label_encoders = {}
+    for col in label_encode_cols:
+        label_encoders[col] = LabelEncoder()
+        df_cur[col] = label_encoders[col].fit_transform(df_cur[col])
 
-    # Criando um novo dataframe com as colunas one-hot encoded
-    df_encoded_onehot_df = pd.DataFrame(df_encoded_onehot.toarray(), columns=encoded_columns)
+    # Aplicando One-Hot Encoding
+    encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+    df_encoded_onehot = encoder.fit_transform(df_cur[onehot_encode_cols])
 
-    # Removendo as colunas originais que foram codificadas
-    df_cur_encoded = df_cur.drop(cols_to_encode, axis=1)
+    # Obtendo os nomes das novas colunas
+    encoded_columns = encoder.get_feature_names_out(onehot_encode_cols)
 
-    # Resetando o índice para garantir que os dataframes tenham o mesmo índice
-    df_cur_encoded.reset_index(drop=True, inplace=True)
+    # Criando um novo DataFrame com as colunas one-hot encoded
+    df_encoded_onehot_df = pd.DataFrame(df_encoded_onehot, columns=encoded_columns)
+
+    # Resetando índice para evitar problemas na concatenação
+    df_cur.reset_index(drop=True, inplace=True)
     df_encoded_onehot_df.reset_index(drop=True, inplace=True)
 
-    # Concatenando o dataframe original com o dataframe one-hot encoded
-    df_cur_encoded = pd.concat([df_cur_encoded, df_encoded_onehot_df], axis=1)
+    # Removendo as colunas originais que foram codificadas
+    df_cur.drop(columns=onehot_encode_cols, inplace=True)
 
-    df_cur_encoded.drop(columns = "atleta_id", inplace = True)
+    # Concatenando o dataframe original com as colunas one-hot encoded
+    df_cur_encoded = pd.concat([df_cur, df_encoded_onehot_df], axis=1)
 
-    # Reordenando as colunas
-    df_cur_encoded = df_cur_encoded[['pontos_num'] + [col for col in df_cur_encoded.columns if col != 'pontos_num']]
+    # Removendo a coluna 'atleta_id' como no código original
+    if 'atleta_id' in df_cur_encoded.columns:
+        df_cur_encoded.drop(columns=['atleta_id'], inplace=True)
+
+    # Reordenando as colunas, garantindo que 'pontos_num' seja a primeira
+    if 'pontos_num' in df_cur_encoded.columns:
+        cols = ['pontos_num'] + [col for col in df_cur_encoded.columns if col != 'pontos_num']
+        df_cur_encoded = df_cur_encoded[cols]
+
+    # Ordenamos o DataFrame corretamente antes de calcular as médias móveis
+    # df_cur_encoded = df_cur_encoded.sort_values(by=['apelido', 'rodada_id'])
+
+    # # Ordenamos por jogador, ano e rodada
+    # df_cur_encoded = df_cur_encoded.sort_values(by=['apelido', 'year', 'rodada_id'])
+
+    # # Aplicamos as médias móveis de forma vetorizada
+    # df_cur_encoded['media_3_rodadas'] = (
+    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+    #     .transform(lambda x: x.rolling(window=3, min_periods=1).mean())
+    # )
+
+    # df_cur_encoded['media_5_rodadas'] = (
+    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+    #     .transform(lambda x: x.rolling(window=5, min_periods=1).mean())
+    # )
+
+    # df_cur_encoded['desvio_3_rodadas'] = (
+    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+    #     .transform(lambda x: x.rolling(window=3, min_periods=1).std())
+    # )
+
+
 
     return df_cur_encoded
