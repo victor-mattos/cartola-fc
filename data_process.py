@@ -95,6 +95,11 @@ def process_curated_data(df_raw:pd.DataFrame):
 
     return filtered_df_cur
 
+
+##################################################
+##################################################
+
+
 def data_encoding(df_cur: pd.DataFrame) -> pd.DataFrame:
     """
     Aplica Label Encoding nas colunas 'apelido' e 'clube_id' e One-Hot Encoding na coluna 'posicao_id'.
@@ -148,25 +153,28 @@ def data_encoding(df_cur: pd.DataFrame) -> pd.DataFrame:
     # Ordenamos o DataFrame corretamente antes de calcular as médias móveis
     # df_cur_encoded = df_cur_encoded.sort_values(by=['apelido', 'rodada_id'])
 
-    # # Ordenamos por jogador, ano e rodada
-    # df_cur_encoded = df_cur_encoded.sort_values(by=['apelido', 'year', 'rodada_id'])
+    # Ordenamos por jogador, ano e rodada
+    df_cur_encoded = df_cur_encoded.sort_values(by=['apelido', 'year', 'rodada_id'])
 
-    # # Aplicamos as médias móveis de forma vetorizada
-    # df_cur_encoded['media_3_rodadas'] = (
-    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
-    #     .transform(lambda x: x.rolling(window=3, min_periods=1).mean())
-    # )
+    # Aplicamos as médias móveis de forma vetorizada
+    df_cur_encoded['media_3_rodadas'] = (
+        df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+        .transform(lambda x: x.rolling(window=3, min_periods=1).mean())
+    )
 
-    # df_cur_encoded['media_5_rodadas'] = (
-    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
-    #     .transform(lambda x: x.rolling(window=5, min_periods=1).mean())
-    # )
+    df_cur_encoded['media_5_rodadas'] = (
+        df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+        .transform(lambda x: x.rolling(window=5, min_periods=1).mean())
+    )
 
-    # df_cur_encoded['desvio_3_rodadas'] = (
-    #     df_cur_encoded.groupby(['apelido', 'year'])['media_num']
-    #     .transform(lambda x: x.rolling(window=3, min_periods=1).std())
-    # )
+    df_cur_encoded['desvio_3_rodadas'] = (
+        df_cur_encoded.groupby(['apelido', 'year'])['media_num']
+        .transform(lambda x: x.rolling(window=3, min_periods=1).std())
+    )
 
+
+    df_cur_encoded['profit_loss'] = df_cur_encoded['variacao_num'].shift(-1)
+    df_cur_encoded["prob_profit_loss"] = df_cur_encoded['profit_loss'].apply(lambda x: 1 if x>0 else 0)
 
 
     return df_cur_encoded
